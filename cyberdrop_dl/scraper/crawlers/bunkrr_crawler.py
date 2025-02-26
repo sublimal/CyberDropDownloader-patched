@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import binascii
 import calendar
 import datetime
+import itertools
+import math
 import re
 from dataclasses import dataclass
 from functools import partial
@@ -226,8 +229,25 @@ class BunkrrCrawler(Crawler):
             link_container = soup.select('a[download*=""]')[-1]
         except IndexError:
             link_container = soup.select("a[class*=download]")[-1]
+
         link_str: str = link_container.get("href")  # type: ignore
+        if link_str == "#":
+            link_str = await self.handle_encrypted_link(url, scrape_item)
+
         return self.parse_url(link_str)
+
+    @error_handling_wrapper
+    async def handle_encrypted_link(self, url: URL, scrape_item: ScrapeItem) -> URL | None:
+        api_url = url.with_path("/api/vs")
+        post_data = {"id": url.parts[2]}
+
+        async with self.request_limiter:
+            json_resp = await self.client.post_json(self.domain, api_url, origin=scrape_item, data=post_data)
+
+        if json_resp.get("encrypted", False):
+            return decode_encrypted_url(json_resp["url"], json_resp["timestamp"])
+        else:
+            return json_resp["url"]
 
     """~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
 
@@ -279,3 +299,10 @@ def parse_datetime(date: str) -> int:
 def with_suffix_encoded(url: URL, suffix: str) -> URL:
     name = Path(url.raw_name).with_suffix(suffix)
     return url.parent.joinpath(str(name), encoded=True).with_query(url.query).with_fragment(url.fragment)
+
+
+def decode_encrypted_url(url, timestamp):
+    arr = binascii.a2b_base64(url)
+    secret = f"SECRET_KEY_{math.floor(timestamp/3600)}"
+    link_str = "".join(chr(c ^ ord(k)) for c, k in zip(arr, itertools.cycle(secret)))
+    return URL(link_str)
