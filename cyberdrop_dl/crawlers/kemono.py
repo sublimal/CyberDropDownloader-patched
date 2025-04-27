@@ -7,7 +7,7 @@ import itertools
 import re
 from collections import defaultdict
 from datetime import datetime  # noqa: TC003
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, NotRequired
 
 from pydantic import AliasChoices, AliasPath, Field
 from typing_extensions import TypedDict  # Compatible with python 3.11
@@ -16,6 +16,7 @@ from yarl import URL
 from cyberdrop_dl.clients.errors import NoExtensionError, ScrapeError
 from cyberdrop_dl.config_definitions.custom.types import AliasModel
 from cyberdrop_dl.crawlers.crawler import Crawler, create_task_id
+from cyberdrop_dl.utils.logger import log  # XXX
 from cyberdrop_dl.utils.utilities import error_handling_wrapper, remove_parts
 
 if TYPE_CHECKING:
@@ -99,6 +100,7 @@ class User(NamedTuple):
 class File(TypedDict):
     name: str
     path: str
+    server: NotRequired[str]
 
 
 class Post(AliasModel):
@@ -119,6 +121,17 @@ class Post(AliasModel):
         if self.file:
             yield self.file
         yield from self.attachments
+
+    def get_attachments_by_name(self, name):
+        return [file for file in self.attachments if file.get("name", None) == name]
+
+    def update_attachments(self, attachments: list[File]):
+        for info in attachments:
+            log(f"update_attach looking for, {info}")
+            for attch in self.get_attachments_by_name(info["name"]):
+                log(f"update_attach found, {attch}")
+                attch.update(info)
+                log(f"update_attach updated, {attch}")
 
 
 class UserPost(Post):
@@ -306,6 +319,7 @@ class KemonoCrawler(Crawler):
         # Not used
         # revisions = json_resp["props"].get("revisions", [])
         post = UserPost(**json_resp["post"])
+        post.update_attachments(json_resp["attachments"])
         await self._handle_user_post(scrape_item, post)
 
     @error_handling_wrapper
@@ -431,7 +445,11 @@ class KemonoCrawler(Crawler):
         self._handle_post_content(scrape_item, post)
 
     def __make_file_url(self, file: File) -> URL:
-        return self.parse_url(f"/data/{file['path']}").with_query(f=file["name"])
+        log(f"make_file: {file}")
+        server = file.get("server", None)
+        if server:
+            server = URL(server)
+        return self.parse_url(f"/data/{file['path']}", server).with_query(f=file["name"])
 
     def __make_api_url_w_offset(self, path: str, og_url: URL) -> URL:
         api_url = self.api_entrypoint / path
