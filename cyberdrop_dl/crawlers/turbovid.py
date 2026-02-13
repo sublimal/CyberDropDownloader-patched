@@ -15,6 +15,7 @@ class Selector:
     ALBUMS = "#listView a.album-row"
     ALBUM_FILES = "#fileTbody tr[data-id]"
     MD5 = "div:-soup-contains('Checksum (MD5)') + div"
+    FILE_NAME = "#fileName"
     UPLOAD_DATE = "svg.h-4.w-4 + span"
     NEXT_PAGE = "a:-soup-contains(Next)[href*='?page']"
 
@@ -81,7 +82,9 @@ class TurboVidCrawler(Crawler):
         scrape_item.possible_datetime = self.parse_iso_date(css.select_text(soup, Selector.UPLOAD_DATE))
         sign_url = (self.PRIMARY_URL / "api/sign").with_query(v=file_id)
         link = self.parse_url((await self.request_json(sign_url))["url"])
-        await self.direct_file(scrape_item, link)
+
+        filename = css.select_text(soup, Selector.FILE_NAME)
+        await self.handle_file(link, scrape_item, filename)
 
 
 def fix_db_referer(referer: str) -> str:
